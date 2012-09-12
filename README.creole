@@ -1,0 +1,13 @@
+This is an extension for rcirc, the Emacs IRC client, to allow it to
+establish IRC connections over SSH sessions.
+
+The idea is you make an ssh session to a host and it allows you to irc
+the local server.  So you can use port forwarding or a client running
+on the remote box.  This makes an ssh session with port forwarding and
+you can then connect rcirc to it. 
+
+I am working towards making this automatic with rcirc server
+establishment.  That could be done by having an extra customize
+variable to list ssh/irc servers and using advice to establish the ssh
+connection before actual connection.
+
