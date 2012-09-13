@@ -142,21 +142,6 @@ The string is like: host:port, eg: localhost:22"
                    (current-buffer))))
            (switch-to-buffer (current-buffer))))))
 
-(defun rcirc-ssh--bootstrap ()
-  "Bootstrap rcirc-ssh by taking over `rcirc-connect'.
-
-The `rcirc-connect' function is saved and changed to the
-`rcirc-ssh-connect' function which does ssh connection to the irc
-server (if required by the `rcirc-ssh-servers' variable) before
-setting up the irc connection.
-
-The original function is saved on the `rcirc-connect' symbol with
-the property `rcirc-original'."
-  (unless (get 'rcirc-connect 'rcirc-original)
-    (let ((original (symbol-function 'rcirc-connect)))
-      (put 'rcirc-connect 'rcirc-original original)
-      (fset rcirc-ssh--rcirc-connect original)
-      (fset rcirc-connect rcirc-ssh-connect))))
 
 ;;;###autoload
 (defun rcirc-ssh-connect (server
@@ -184,6 +169,26 @@ the property `rcirc-original'."
        nick user-name full-name
        startup-channels password
        encryption)))
+
+;; Bootstrapping
+
+(defvar rcirc-ssh--rcirc-connect 'x)
+
+(defun rcirc-ssh--bootstrap ()
+  "Bootstrap rcirc-ssh by taking over `rcirc-connect'.
+
+The `rcirc-connect' function is saved and changed to the
+`rcirc-ssh-connect' function which does ssh connection to the irc
+server (if required by the `rcirc-ssh-servers' variable) before
+setting up the irc connection.
+
+The original function is saved on the `rcirc-connect' symbol with
+the property `rcirc-original'."
+  (unless (get 'rcirc-connect 'rcirc-original)
+    (let ((original (symbol-function 'rcirc-connect)))
+      (put 'rcirc-connect 'rcirc-original original)
+      (fset rcirc-ssh--rcirc-connect original)
+      (fset rcirc-connect (symbol-function 'rcirc-ssh-connect)))))
 
 
 (provide 'rcirc-ssh)
