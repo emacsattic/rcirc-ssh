@@ -55,9 +55,12 @@ then the rcirc connection is made to that."
   :group 'rcirc
   :type '(repeat string))
 
-(defun rcirc--do-ssh (host port)
-  "Make an rcirc ssh session."
-  (interactive
+(defun rcirc--do-ssh (host port &optional callback)
+  "Make an rcirc ssh session to HOST on PORT.
+
+Optionally call CALLBACK when the processes state changes.
+Callback is passed the PROC, the STATUS and the LOCAL-PORT."
+  (interactive  ; not sure we need the interactive crap anymore
    (list
     (read-from-minibuffer
      "host: "
@@ -75,17 +78,28 @@ then the rcirc connection is made to that."
   (let* ((url-form (format "%s:%d" host port))
          (connection-str (format " *ssh-%s-%d*" host port))
          (ssh-buffer (get-buffer-create connection-str))
+         (local-port 6667) ; could randomize this
          (proc
           (start-process
            ;; We should check for an existing process with this name before
            ;; starting the process
            connection-str
            ssh-buffer
-           ;; We could actually randomize the 2nd port
-           "ssh" "-N" "-L" (format "%d:localhost:6667" port) host))
-         (pair (cons url-form (list :process proc :localport 6667))))
-    (add-to-list 'rcirc--server-ssh-connections pair)
-    pair))
+           "ssh" "-N" "-L" (format "%d:localhost:%d" port local-port) host)))
+    ;; Set the sentinel
+    (set-process-sentinel
+     proc
+     (lambda (proc status)
+       (message
+        "rcirc-ssh connection to %s has status: %s"
+        url-form
+        status)
+       (when (functionp callback)
+         (funcall callback proc status local-port))))
+    ;; Make sure the state of what proceses we have gets updated
+    (let ((pair (cons url-form (list :process proc :localport 6667))))
+      (add-to-list 'rcirc--server-ssh-connections pair)
+      pair)))
 
 (defun rcirc-ssh-kill (host-port)
   "Kill the ssh sesion for HOST-PORT a string.
@@ -128,22 +142,49 @@ The string is like: host:port, eg: localhost:22"
                    (current-buffer))))
            (switch-to-buffer (current-buffer))))))
 
-(defadvice rcirc-connect (before
-                          rcirc-ssh-server-connect
-                          first
-                          (server
-                           &optional port nick user-name
-                           full-name startup-channels password encryption)
-                          activate)
-  "Connecct to the ssh proxy for certain rcirc servers."
-  (when (member server rcirc-ssh-servers)
-    (let ((ssh-proxy (rcirc--do-ssh server (or port 6667))))
-      (message
-       "rcirc-ssh making connection to %s on port %d"
-       server (or port 6667))
-      (sit-for 2)
-      (setq server "localhost")
-      (setq port (plist-get (cdr ssh-proxy) :localport)))))
+(defun rcirc-ssh--bootstrap ()
+  "Bootstrap rcirc-ssh by taking over `rcirc-connect'.
+
+The `rcirc-connect' function is saved and changed to the
+`rcirc-ssh-connect' function which does ssh connection to the irc
+server (if required by the `rcirc-ssh-servers' variable) before
+setting up the irc connection.
+
+The original function is saved on the `rcirc-connect' symbol with
+the property `rcirc-original'."
+  (unless (get 'rcirc-connect 'rcirc-original)
+    (let ((original (symbol-function 'rcirc-connect)))
+      (put 'rcirc-connect 'rcirc-original original)
+      (fset rcirc-ssh--rcirc-connect original)
+      (fset rcirc-connect rcirc-ssh-connect))))
+
+;;;###autoload
+(defun rcirc-ssh-connect (server
+                          &optional port nick user-name
+                            full-name startup-channels password encryption)
+  "Connecct to the rcirc with possible ssh proxying."
+  (if (member server rcirc-ssh-servers)
+      (rcirc--do-ssh
+       server
+       (or port 6667)
+       ;; Supply the callback to start irc after the ssh
+       (lambda (proc status local-port)
+         (when (equal status "started\n") ; WHAT STATE SHOULD IT BE??
+           ;; Do the proxy connection over the ssh tunnel
+           (rcirc-ssh--rcirc-connect
+            "localhost"
+            local-port
+            nick user-name full-name
+            startup-channels password
+            encryption))))
+      ;; Else do a straight connection to the server
+      (rcirc-ssh--rcirc-connect
+       server
+       port
+       nick user-name full-name
+       startup-channels password
+       encryption)))
+
 
 (provide 'rcirc-ssh)
 
