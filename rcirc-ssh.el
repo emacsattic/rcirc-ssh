@@ -60,21 +60,6 @@ then the rcirc connection is made to that."
 
 Optionally call CALLBACK when the processes state changes.
 Callback is passed the PROC, the STATUS and the LOCAL-PORT."
-  (interactive  ; not sure we need the interactive crap anymore
-   (list
-    (read-from-minibuffer
-     "host: "
-     nil
-     nil
-     nil
-     'rcirc--ssh-server-history)
-    (string-to-number
-     (read-from-minibuffer
-      "port: "
-      nil
-      nil
-      nil
-      'rcirc--ssh-port-history))))
   (let* ((url-form (format "%s:%d" host port))
          (connection-str (format " *ssh-%s-%d*" host port))
          (ssh-buffer (get-buffer-create connection-str))
