@@ -77,9 +77,9 @@ Callback is passed the PROC, the STATUS and the LOCAL-PORT."
      (lambda (proc status)
        (message
         "rcirc-ssh connection to %s has status: %s"
-        url-form
+        proc
         status)
-       (when (functionp callback)
+       (when (and callback (functionp callback))
          (funcall callback proc status local-port))))
     ;; Make sure the state of what proceses we have gets updated
     (let ((pair (cons url-form (list :process proc :localport 6667))))
