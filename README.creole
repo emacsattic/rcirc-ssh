@@ -1,13 +1,69 @@
 This is an extension for rcirc, the Emacs IRC client, to allow it to
 establish IRC connections over SSH sessions.
 
-The idea is you make an ssh session to a host and it allows you to irc
-the local server.  So you can use port forwarding or a client running
-on the remote box.  This makes an ssh session with port forwarding and
-you can then connect rcirc to it. 
+[[https://github.com/nfisher/SpikyIRC|SpikyIRC]] is an IRCd that sits
+behind SSH.  You can either connect directly to the IRC there via SSH
+or connect with SSH and port forward to the local IRCd.
 
-I am working towards making this automatic with rcirc server
-establishment.  That could be done by having an extra customize
-variable to list ssh/irc servers and using advice to establish the ssh
-connection before actual connection.
+So this is an extension for rcirc that automates that for Emacs.
 
+To use this install from marmalade:
+
+{{{
+M-x package-install rcirc-ssh
+}}}
+
+and then configure the irc servers that sit behind ssh:
+
+{{{
+M-x customize-variable rcirc-ssh-servers
+}}}
+
+Here's the customize screen:
+
+{{{
+Hide Rcirc Ssh Servers:
+INS DEL String: team-irc.example.com
+INS
+    State : SAVED and set.
+   List of rcirc servers that require an SSH connection first. Hide   
+   
+   A server in this list will have the connection to it made through
+   an SSH session proxy.  The ssh connection is made with a port
+   forward to the relevant port (using a randomized local port) and
+   then the rcirc connection is made to that.
+Groups: Rcirc
+}}}
+
+Then connect to your IRC server:
+
+{{{
+C-u M-x rcirc
+IRC Server: team-irc.example.com
+IRC Port: 6667
+IRC Nick: me
+IRC Username: me
+IRC Password: *****
+IRC Channels: #myteam
+}}}
+
+Using straight {{{M-x rcirc}}} will connect to all the servers you
+have in your {{{rcirc-server-alist}}} and will also do the SSH
+establishment first.
+
+If you want to kill the SSH session you can with:
+
+{{{
+M-x rcirc-ssh-kill
+}}}
+
+completion will help you find the right one.
+
+One final command lists the current SSH sessions for rcirc:
+
+{{{
+M-x rcirc-ssh-list
+}}}
+
+You can't do anything with them yet, having a mode that allows
+interactive management (delete mainly) is the next thing.
