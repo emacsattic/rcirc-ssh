@@ -139,14 +139,16 @@ The string is like: host:port, eg: localhost:22"
        (or port 6667)
        ;; Supply the callback to start irc after the ssh
        (lambda (proc status local-port)
-         (when (equal status "started\n") ; WHAT STATE SHOULD IT BE??
-           ;; Do the proxy connection over the ssh tunnel
-           (rcirc-ssh--rcirc-connect
-            "localhost"
-            local-port
-            nick user-name full-name
-            startup-channels password
-            encryption))))
+         (if (equal status "started\n")
+             ;; Do the proxy connection over the ssh tunnel
+             (rcirc-ssh--rcirc-connect
+              "localhost"
+              local-port
+              nick user-name full-name
+              startup-channels password
+              encryption)
+             ;; Else
+             (message "rcirc-ssh: unhandled state: %s" state))))
       ;; Else do a straight connection to the server
       (rcirc-ssh--rcirc-connect
        server
