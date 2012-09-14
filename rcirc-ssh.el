@@ -5,7 +5,7 @@
 ;; Author: Nic Ferrier <nferrier@ferrier.me.uk>
 ;; Maintainer: Nic Ferrier <nferrier@ferrier.me.uk>
 ;; Keywords: processes, comm
-;; Version: 0.0.3
+;; Version: 0.0.4
 ;; Created: 14th September 2012
 ;; Package-Requires: ((kv "0.0.3"))
 
@@ -94,7 +94,10 @@ Optionally call CALLBACK when the processes state changes.
 Callback is passed the PROC, the STATUS and the LOCAL-PORT."
   (let* ((url-form (format "%s:%s" host port))
          (connection-str (format " *ssh-%s-%s*" host port))
-         (ssh-buffer (get-buffer-create connection-str))
+         (ssh-buffer
+          (with-current-buffer (get-buffer-create connection-str)
+            (erase-buffer)
+            (current-buffer)))
          (local-port (rcirc-ssh--find-free-service))
          (proc
           (start-process
@@ -102,17 +105,25 @@ Callback is passed the PROC, the STATUS and the LOCAL-PORT."
            ;; starting the process
            connection-str
            ssh-buffer
-           "ssh" "-N" "-L" (format "%s:localhost:%s" local-port port) host)))
-    ;; Set the sentinel
-    (set-process-sentinel
+           "ssh" "-N" "-v" ; need the -v so we can detect when the port is up
+           "-L" (format "%s:localhost:%s" local-port port)
+           host)))
+    ;; Set the filter so we can find the port starting
+    (set-process-filter
      proc
-     (lambda (proc status)
-       (message
-        "rcirc-ssh connection to %s has status: %s"
-        proc
-        status)
-       (when (functionp callback)
-         (funcall callback proc status local-port))))
+     (lambda (proc data)
+       (with-current-buffer (process-buffer proc)
+         (goto-char (point-max))
+         (insert data)
+         (goto-char (point-min))
+         (when (and
+                (functionp callback)
+                (re-search-forward
+                 (format
+                  "debug1: Local forwarding listening on 127.0.0.1 port %s."
+                  local-port)
+                 nil t))
+           (funcall callback proc local-port)))))
     ;; Make sure the state of what proceses we have gets updated
     (let ((pair (cons url-form (list :process proc :localport local-port))))
       (add-to-list 'rcirc--server-ssh-connections pair)
@@ -174,17 +185,17 @@ The string is like: host:port, eg: localhost:22"
        server
        (or port 6667)
        ;; Supply the callback to start irc after the ssh
-       (lambda (proc status local-port)
-         (if (equal status "started\n")
-             ;; Do the proxy connection over the ssh tunnel
-             (rcirc-ssh--rcirc-connect
-              "localhost"
-              local-port
-              nick user-name full-name
-              startup-channels password
-              encryption)
-             ;; Else
-             (message "rcirc-ssh: unhandled state: %s" status))))
+       (lambda (proc local-port)
+         ;; Do the proxy connection over the ssh tunnel
+         (unless (process-get proc :rcirc-con)
+           (process-put
+            proc :rcirc-con
+            (rcirc-ssh--rcirc-connect
+             "localhost"
+             local-port
+             nick user-name full-name
+             startup-channels password
+             encryption)))))
       ;; Else do a straight connection to the server
       (rcirc-ssh--rcirc-connect
        server
@@ -196,6 +207,11 @@ The string is like: host:port, eg: localhost:22"
 ;; Bootstrapping
 
 (defvar rcirc-ssh--rcirc-connect 'x)
+
+;;;###autoload
+(defun rcirc-ssh--connect-proxy (&rest args)
+  "Proxy to allow wiring things up properly"
+  (apply 'rcirc-ssh-connect args))
 
 ;;;###autoload
 (defun rcirc-ssh-bootstrap ()
@@ -220,10 +236,10 @@ in your .emacs."
     (let ((original (symbol-function 'rcirc-connect)))
       (put 'rcirc-connect 'rcirc-original original)
       (fset 'rcirc-ssh--rcirc-connect original)
-      (fset 'rcirc-connect (symbol-function 'rcirc-ssh-connect)))))
+      (fset 'rcirc-connect (symbol-function 'rcirc-ssh--connect-proxy)))))
 
 ;;;###autoload
-(eval-after-load "rcirc" (rcirc-ssh-bootstrap))
+(eval-after-load "rcirc" '(rcirc-ssh-bootstrap))
 
 (provide 'rcirc-ssh)
 
