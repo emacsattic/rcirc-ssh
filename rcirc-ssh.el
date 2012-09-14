@@ -1,11 +1,11 @@
-;;; rcirc-ssh.el --- do irc over ssh sessions
+;;; rcirc-ssh.el --- do irc over ssh sessions -*- lexical-binding: t -*-
 
 ;; Copyright (C) 2012  Nic Ferrier
 
 ;; Author: Nic Ferrier <nferrier@ferrier.me.uk>
 ;; Maintainer: Nic Ferrier <nferrier@ferrier.me.uk>
 ;; Keywords: processes, comm
-;; Version: 0.0.2
+;; Version: 0.0.3
 ;; Created: 14th September 2012
 ;; Package-Requires: ((kv "0.0.3"))
 
@@ -33,7 +33,6 @@
 (require 'cl)
 (require 'kv)
 (require 'rcirc)
-(setq lexical-binding t)
 
 (defvar rcirc--server-ssh-connections nil
   "List of ssh connection buffer/processes.
@@ -60,22 +59,50 @@ then the rcirc connection is made to that."
   :group 'rcirc
   :type '(repeat string))
 
+(defun rcirc-ssh--find-free-service ()
+  "Return a free (unused) TCP port.
+
+The port is chosen randomly from the ephemeral ports.
+
+This code is pinched from Elnode."
+  (let (myserver
+        (port 50000)) ; this should be ephemeral base
+    (while
+        (not
+         (processp
+          (condition-case sig
+              (setq myserver
+                    (make-network-process
+                     :name "*test-proc*"
+                     :server t
+                     :nowait 't
+                     :host 'local
+                     :service port
+                     :family 'ipv4))
+            (file-error
+             (if (equal
+                  "Cannot bind server socket address already in use"
+                  (mapconcat 'identity (cdr sig) " "))
+                 (setq port (+ 50000 (random 5000)))))))))
+    (delete-process myserver)
+    port))
+
 (defun rcirc--do-ssh (host port &optional callback)
   "Make an rcirc ssh session to HOST on PORT.
 
 Optionally call CALLBACK when the processes state changes.
 Callback is passed the PROC, the STATUS and the LOCAL-PORT."
-  (let* ((url-form (format "%s:%d" host port))
-         (connection-str (format " *ssh-%s-%d*" host port))
+  (let* ((url-form (format "%s:%s" host port))
+         (connection-str (format " *ssh-%s-%s*" host port))
          (ssh-buffer (get-buffer-create connection-str))
-         (local-port 6667) ; could randomize this
+         (local-port (rcirc-ssh--find-free-service))
          (proc
           (start-process
            ;; We should check for an existing process with this name before
            ;; starting the process
            connection-str
            ssh-buffer
-           "ssh" "-N" "-L" (format "%d:localhost:%d" port local-port) host)))
+           "ssh" "-N" "-L" (format "%s:localhost:%s" local-port port) host)))
     ;; Set the sentinel
     (set-process-sentinel
      proc
@@ -84,10 +111,10 @@ Callback is passed the PROC, the STATUS and the LOCAL-PORT."
         "rcirc-ssh connection to %s has status: %s"
         proc
         status)
-       (when (and callback (functionp callback))
+       (when (functionp callback)
          (funcall callback proc status local-port))))
     ;; Make sure the state of what proceses we have gets updated
-    (let ((pair (cons url-form (list :process proc :localport 6667))))
+    (let ((pair (cons url-form (list :process proc :localport local-port))))
       (add-to-list 'rcirc--server-ssh-connections pair)
       pair)))
 
@@ -137,8 +164,10 @@ The string is like: host:port, eg: localhost:22"
 
 ;;;###autoload
 (defun rcirc-ssh-connect (server
-                          &optional port nick user-name
-                            full-name startup-channels password encryption)
+                          &optional
+                            port nick user-name
+                            full-name startup-channels
+                            password encryption)
   "Connecct to the rcirc with possible ssh proxying."
   (if (member server rcirc-ssh-servers)
       (rcirc--do-ssh
@@ -155,7 +184,7 @@ The string is like: host:port, eg: localhost:22"
               startup-channels password
               encryption)
              ;; Else
-             (message "rcirc-ssh: unhandled state: %s" state))))
+             (message "rcirc-ssh: unhandled state: %s" status))))
       ;; Else do a straight connection to the server
       (rcirc-ssh--rcirc-connect
        server
@@ -190,8 +219,11 @@ in your .emacs."
   (unless (get 'rcirc-connect 'rcirc-original)
     (let ((original (symbol-function 'rcirc-connect)))
       (put 'rcirc-connect 'rcirc-original original)
-      (fset rcirc-ssh--rcirc-connect original)
-      (fset rcirc-connect (symbol-function 'rcirc-ssh-connect)))))
+      (fset 'rcirc-ssh--rcirc-connect original)
+      (fset 'rcirc-connect (symbol-function 'rcirc-ssh-connect)))))
+
+;;;###autoload
+(eval-after-load "rcirc" (rcirc-ssh-bootstrap))
 
 (provide 'rcirc-ssh)
 
