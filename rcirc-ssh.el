@@ -3,7 +3,11 @@
 ;; Copyright (C) 2012  Nic Ferrier
 
 ;; Author: Nic Ferrier <nferrier@ferrier.me.uk>
+;; Maintainer: Nic Ferrier <nferrier@ferrier.me.uk>
 ;; Keywords: processes, comm
+;; Version: 0.0.2
+;; Created: 14th September 2012
+;; Package-Requires: ((kv "0.0.3"))
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -28,6 +32,7 @@
 
 (require 'cl)
 (require 'kv)
+(require 'rcirc)
 (setq lexical-binding t)
 
 (defvar rcirc--server-ssh-connections nil
@@ -86,6 +91,7 @@ Callback is passed the PROC, the STATUS and the LOCAL-PORT."
       (add-to-list 'rcirc--server-ssh-connections pair)
       pair)))
 
+;;;###autoload
 (defun rcirc-ssh-kill (host-port)
   "Kill the ssh sesion for HOST-PORT a string.
 
@@ -108,6 +114,7 @@ The string is like: host:port, eg: localhost:22"
       (setq rcirc--server-ssh-connections
             (delq pair rcirc--server-ssh-connections)))))
 
+;;;###autoload
 (defun rcirc-ssh-list ()
   "List the current rcirc ssh sessions."
   (interactive)
@@ -161,7 +168,8 @@ The string is like: host:port, eg: localhost:22"
 
 (defvar rcirc-ssh--rcirc-connect 'x)
 
-(defun rcirc-ssh--bootstrap ()
+;;;###autoload
+(defun rcirc-ssh-bootstrap ()
   "Bootstrap rcirc-ssh by taking over `rcirc-connect'.
 
 The `rcirc-connect' function is saved and changed to the
@@ -170,13 +178,20 @@ server (if required by the `rcirc-ssh-servers' variable) before
 setting up the irc connection.
 
 The original function is saved on the `rcirc-connect' symbol with
-the property `rcirc-original'."
+the property `rcirc-original'.
+
+You can call this function interactively but the best way to
+initialize `rcirc-ssh' is to add an `after-init-hook':
+
+  (add-hook 'after-init-hook 'rcirc-ssh--bootstrap)
+
+in your .emacs."
+  (interactive)
   (unless (get 'rcirc-connect 'rcirc-original)
     (let ((original (symbol-function 'rcirc-connect)))
       (put 'rcirc-connect 'rcirc-original original)
       (fset rcirc-ssh--rcirc-connect original)
       (fset rcirc-connect (symbol-function 'rcirc-ssh-connect)))))
-
 
 (provide 'rcirc-ssh)
 

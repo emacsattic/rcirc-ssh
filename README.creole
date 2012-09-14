@@ -13,6 +13,12 @@ To use this install from marmalade:
 M-x package-install rcirc-ssh
 }}}
 
+Bootstrap the {{{rcirc-ssh}}} service:
+
+{{{
+M-x rcirc-ssh-bootstrap
+}}}
+
 and then configure the irc servers that sit behind ssh:
 
 {{{
