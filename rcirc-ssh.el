@@ -5,7 +5,7 @@
 ;; Author: Nic Ferrier <nferrier@ferrier.me.uk>
 ;; Maintainer: Nic Ferrier <nferrier@ferrier.me.uk>
 ;; Keywords: processes, comm
-;; Version: 0.0.4
+;; Version: 0.0.5
 ;; Created: 14th September 2012
 ;; Package-Requires: ((kv "0.0.3"))
 
@@ -49,15 +49,21 @@ which we have a connection.")
 (defvar rcirc--ssh-port-history nil
   "Completing read history variable.")
 
+
 (defcustom rcirc-ssh-servers ()
   "List of rcirc servers that require an SSH connection first.
 
 A server in this list will have the connection to it made through
 an SSH session proxy.  The ssh connection is made with a port
 forward to the relevant port (using a randomized local port) and
-then the rcirc connection is made to that."
+then the rcirc connection is made to that.
+
+The value part of the list may be an SSH key filename which MUST
+be present."
   :group 'rcirc
-  :type '(repeat string))
+  :type '(alist
+          :key-type string
+          :value-type file))
 
 (defun rcirc-ssh--find-free-service ()
   "Return a free (unused) TCP port.
@@ -87,8 +93,10 @@ This code is pinched from Elnode."
     (delete-process myserver)
     port))
 
-(defun rcirc--do-ssh (host port &optional callback)
-  "Make an rcirc ssh session to HOST on PORT.
+(defun rcirc--do-ssh (host port key &optional callback)
+  "Make an rcirc SSH session to HOST on PORT with KEY.
+
+KEY is an SSH key file name.
 
 Optionally call CALLBACK when the processes state changes.
 Callback is passed the PROC, the STATUS and the LOCAL-PORT."
@@ -107,6 +115,7 @@ Callback is passed the PROC, the STATUS and the LOCAL-PORT."
            ssh-buffer
            "ssh" "-N" "-v" ; need the -v so we can detect when the port is up
            "-L" (format "%s:localhost:%s" local-port port)
+           "-i" (expand-file-name key)
            host)))
     ;; Set the filter so we can find the port starting
     (set-process-filter
@@ -180,10 +189,11 @@ The string is like: host:port, eg: localhost:22"
                             full-name startup-channels
                             password encryption)
   "Connecct to the rcirc with possible ssh proxying."
-  (if (member server rcirc-ssh-servers)
+  (if (member server (kvalist->keys rcirc-ssh-servers))
       (rcirc--do-ssh
        server
        (or port 6667)
+       (aget rcirc-ssh-servers server) ; lookup the ssh key
        ;; Supply the callback to start irc after the ssh
        (lambda (proc local-port)
          ;; Do the proxy connection over the ssh tunnel
