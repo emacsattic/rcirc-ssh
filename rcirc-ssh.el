@@ -109,10 +109,12 @@ KEY is an SSH key file name.
 
 Optionally call CALLBACK when the processes state changes.
 Callback is passed the PROC, the STATUS and the LOCAL-PORT."
-  (let* ((url-form (format "%s:%s" host port))
+  (let* (proc-called ; set to t when we call the proc
+         (url-form (format "%s:%s" host port))
          (connection-str (format " *ssh-%s-%s*" host port))
          (ssh-buffer
-          (with-current-buffer (get-buffer-create connection-str)
+          (with-current-buffer
+              (generate-new-buffer connection-str)
             (erase-buffer)
             (current-buffer)))
          (local-port (rcirc-ssh--find-free-service))
@@ -135,17 +137,19 @@ Callback is passed the PROC, the STATUS and the LOCAL-PORT."
          (insert data)
          (goto-char (point-min))
          (when (and
+                (not proc-called) ; don't do it if we're done
                 (functionp callback)
                 (re-search-forward
                  (format
                   "debug1: Local forwarding listening on 127.0.0.1 port %s."
                   local-port)
                  nil t))
+           (setq proc-called t) ; indicates we're calling the proc
            (funcall callback proc local-port)))))
     ;; Make sure the state of what proceses we have gets updated
     (let ((pair (cons url-form (list :process proc :localport local-port))))
       (add-to-list 'rcirc--server-ssh-connections pair)
-      pair)))
+      proc)))
 
 ;;;###autoload
 (defun rcirc-ssh-kill (host-port)
