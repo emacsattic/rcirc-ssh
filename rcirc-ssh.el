@@ -33,6 +33,7 @@
 (require 'cl)
 (require 'kv)
 (require 'rcirc)
+(require 'assoc) ; only for aget - should provide an aget in kv
 
 (defvar rcirc--server-ssh-connections nil
   "List of ssh connection buffer/processes.
@@ -64,6 +65,14 @@ be present."
   :type '(alist
           :key-type string
           :value-type file))
+
+(defcustom rcirc-ssh-do-bootstrap nil
+  "Whether to do bootstrap in rcirc-ssh or not.
+
+Bootstrapping is useful if you use rcirc-ssh authentication for
+your main rcirc connections."
+  :group 'rcirc
+  :type 'boolean)
 
 (defun rcirc-ssh--find-free-service ()
   "Return a free (unused) TCP port.
@@ -181,6 +190,9 @@ The string is like: host:port, eg: localhost:22"
                    (current-buffer))))
            (switch-to-buffer (current-buffer))))))
 
+(defun rcirc-ssh--get-key (server port nick user-name)
+  "Lookup a key filename."
+  (aget rcirc-ssh-servers server))
 
 ;;;###autoload
 (defun rcirc-ssh-connect (server
@@ -189,30 +201,52 @@ The string is like: host:port, eg: localhost:22"
                             full-name startup-channels
                             password encryption)
   "Connecct to the rcirc with possible ssh proxying."
-  (if (member server (kvalist->keys rcirc-ssh-servers))
-      (rcirc--do-ssh
-       server
-       (or port 6667)
-       (aget rcirc-ssh-servers server) ; lookup the ssh key
-       ;; Supply the callback to start irc after the ssh
-       (lambda (proc local-port)
-         ;; Do the proxy connection over the ssh tunnel
-         (unless (process-get proc :rcirc-con)
-           (process-put
-            proc :rcirc-con
-            (rcirc-ssh--rcirc-connect
-             "localhost"
-             local-port
-             nick user-name full-name
-             startup-channels password
-             encryption)))))
-      ;; Else do a straight connection to the server
-      (rcirc-ssh--rcirc-connect
-       server
-       port
-       nick user-name full-name
-       startup-channels password
-       encryption)))
+  (let ((ssh-config (rcirc-ssh--get-key server port nick user-name)))
+    (if ssh-config
+        (let* (real-rcirc-con
+               (ssh-session
+                (rcirc--do-ssh
+                 ;; Make sure we namespace the ssh buffer
+                 (concat user-name "@" server)
+                 (or port 6667)
+                 ;; Use the looked-up ssh key filename
+                 ssh-config
+                 ;; Supply the callback to start irc after the ssh
+                 (lambda (proc local-port)
+                   ;; Do the proxy connection over the ssh tunnel
+                   (unless (process-get proc :rcirc-con)
+                     (let ((con
+                            (if (functionp rcirc-ssh--rcirc-connect)
+                                (rcirc-ssh--rcirc-connect
+                                 "localhost"
+                                 local-port
+                                 nick user-name full-name
+                                 startup-channels password
+                                 encryption)
+                                ;; Else we weren't bootstrapped, just
+                                ;; connect with rcirc
+                                (rcirc-connect
+                                 "localhost"
+                                 local-port
+                                 nick user-name full-name
+                                 startup-channels password
+                                 encryption))))
+                       (setq real-rcirc-con con)
+                       (process-put proc :rcirc-con con)))))))
+          (message "rcirc-ssh switching to ssh for something to watch")
+          (switch-to-buffer (process-buffer ssh-session))
+          ;; Wait for the rcirc connection to establish
+          (while (not real-rcirc-con)
+            (sit-for 0.1))
+          ;; Return the correct irc connection
+          real-rcirc-con)
+        ;; Else do a straight connection to the server
+        (rcirc-ssh--rcirc-connect
+         server
+         port
+         nick user-name full-name
+         startup-channels password
+         encryption))))
 
 ;; Bootstrapping
 
@@ -248,8 +282,11 @@ in your .emacs."
       (fset 'rcirc-ssh--rcirc-connect original)
       (fset 'rcirc-connect (symbol-function 'rcirc-ssh--connect-proxy)))))
 
-;;;###autoload
-(eval-after-load "rcirc" '(rcirc-ssh-bootstrap))
+;; Not sure how to auto bootstrap this in.
+;; ;;;###autoload
+;; (eval-after-load "rcirc"
+;;   '(when rcirc-ssh-do-bootstrap
+;;     (rcirc-ssh-bootstrap)))
 
 (provide 'rcirc-ssh)
 
