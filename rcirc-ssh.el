@@ -38,8 +38,12 @@
 (defvar rcirc-ssh/server-connections nil
   "List of ssh connection buffer/processes.
 
-This is state for rcirc-ssh.  It keeps the list of servers to
-which we have a connection.")
+This is state for rcirc-ssh.  It keeps the a-list of servers to
+which we have a connection.
+
+The a-list is keyed by server:port and the value is a p-list of
+`:process', the ssh session process and `:localport', the local
+port to which we are connecting the irc service.")
 
 (defvar rcirc-ssh/session-history nil
   "Completing read history variable.")
@@ -102,6 +106,27 @@ This code is pinched from Elnode."
     (delete-process myserver)
     port))
 
+(defun rcirc-ssh/ssh-filter (callback local-port ssh-process data)
+  "Filter the ssh session to find the reason to CALLBACK."
+  (let ((ssh-buffer (process-buffer ssh-process)))
+    (when (and (bufferp ssh-buffer)
+               (buffer-live-p ssh-buffer))
+      (with-current-buffer (process-buffer ssh-process)
+        (goto-char (point-max))
+        (insert data)
+        (goto-char (point-min))
+        (when
+            (and
+             (not (process-get ssh-process :rcirc-ssh-callback-done))
+             (functionp callback)
+             (re-search-forward
+              (format
+               "debug1: Local forwarding listening on 127.0.0.1 port %s."
+               local-port)
+              nil t))
+          (process-put ssh-process :rcirc-ssh-callback-done t)
+          (funcall callback ssh-process local-port))))))
+
 (defun rcirc-ssh/do-ssh (host port key &optional callback)
   "Make an rcirc SSH session to HOST on PORT with KEY.
 
@@ -109,8 +134,7 @@ KEY is an SSH key file name.
 
 Optionally call CALLBACK when the processes state changes.
 Callback is passed the PROC, the STATUS and the LOCAL-PORT."
-  (let* (proc-called ; set to t when we call the proc
-         (url-form (format "%s:%s" host port))
+  (let* ((url-form (format "%s:%s" host port))
          (connection-str (format " *ssh-%s-%s*" host port))
          (ssh-buffer
           (with-current-buffer
@@ -126,32 +150,25 @@ Callback is passed the PROC, the STATUS and the LOCAL-PORT."
            host))
          ;; We should check for an existing process with this name before
          ;; starting the process
-         (proc (apply 'start-process
-                      connection-str ssh-buffer command)))
-    (with-current-buffer (process-buffer proc)
+         (ssh-session
+          (apply 'start-process connection-str ssh-buffer command)))
+    (with-current-buffer (process-buffer ssh-session)
       (insert (format "%s\n" command)))
     ;; Set the filter so we can find the port starting
-    (set-process-filter
-     proc
-     (lambda (proc data)
-       (with-current-buffer (process-buffer proc)
-         (goto-char (point-max))
-         (insert data)
-         (goto-char (point-min))
-         (when (and
-                (not proc-called) ; don't do it if we're done
-                (functionp callback)
-                (re-search-forward
-                 (format
-                  "debug1: Local forwarding listening on 127.0.0.1 port %s."
-                  local-port)
-                 nil t))
-           (setq proc-called t) ; indicates we're calling the proc
-           (funcall callback proc local-port)))))
-    ;; Make sure the state of what proceses we have gets updated
-    (let ((pair (cons url-form (list :process proc :localport local-port))))
-      (add-to-list 'rcirc-ssh/server-connections pair)
-      proc)))
+    (set-process-filter ssh-session
+                        (lambda (ssh-sesh data)
+                          (rcirc-ssh/ssh-filter
+                           callback local-port ssh-sesh data)))
+    ;; Make sure the ssh-session knows it's server-connections key
+    (process-put ssh-session :rcirc-ssh-url url-form)
+    ;; Record the Make sure the state of what proceses we have gets updated
+    (setq
+     rcirc-ssh/server-connections
+     (acons
+      url-form (list :process ssh-session :localport local-port)
+      rcirc-ssh/server-connections))
+    ;; And return the proc
+    ssh-session))
 
 ;;;###autoload
 (defun rcirc-ssh-kill (host-port)
@@ -200,9 +217,18 @@ The string is like: host:port, eg: localhost:22"
   "Lookup a key filename."
   (aget rcirc-ssh-servers server))
 
-(defun rcirc-ssh-sentinel (process sentinel)
-  (awhen (process-get process :rcirc-ssh-process)
-    (delete-process it)))
+(defun rcirc-ssh/sentinel (irc-con-proc sentinel)
+  "If PROCESS has an `:rcirc-ssh-session' then kill it."
+  (let* ((ssh-session (process-get irc-con-proc :rcirc-ssh-session))
+         (url (process-get ssh-session :rcirc-ssh-url)))
+    (message "disconnecting ssh session %s" ssh-session)
+    (delete-process ssh-session)
+    (setq rcirc-ssh/server-connections
+          (delq (assoc url rcirc-ssh/server-connections)
+                rcirc-ssh/server-connections))))
+
+;; Add the sentintel
+(add-hook 'rcirc-sentinel-hooks 'rcirc-ssh/sentinel)
 
 ;;;###autoload
 (defun rcirc-ssh (ssh-config
@@ -211,7 +237,11 @@ The string is like: host:port, eg: localhost:22"
                     port nick user-name
                     full-name startup-channels
                     password encryption)
-  "Connecct to the SERVER using SSH-CONFIG proxying."
+  "Connecct to the SERVER using SSH-CONFIG proxying.
+
+You can call this directly, it does no other plumbing except to
+establish the SSH session and put the IRC connection over the top
+of it."
   (let* (real-rcirc-con
          (ssh-session
           (rcirc-ssh/do-ssh
@@ -221,25 +251,26 @@ The string is like: host:port, eg: localhost:22"
            ;; Use the looked-up ssh key filename
            ssh-config
            ;; Supply the callback to start irc after the ssh
-           (lambda (proc local-port)
+           (lambda (ssh-session-proc local-port)
              ;; Do the proxy connection over the ssh tunnel
-             (unless (process-get proc :rcirc-con)
+            (unless (process-get ssh-session-proc :rcirc-ssh-irccon)
                (let ((con
                       ;; Call the right connect function
                       (funcall
-                       (if (functionp rcirc-ssh--rcirc-connect)
-                           'rcirc-ssh--rcirc-connect
+                       (if (functionp 'rcirc-ssh/rcirc-connect)
+                           'rcirc-ssh/rcirc-connect
                            'rcirc-connect)
                        "localhost" local-port
                        nick user-name full-name
                        startup-channels password encryption)))
                  (setq real-rcirc-con con)
-                 (process-put proc :rcirc-con con)))))))
+                 (process-put ssh-session-proc :rcirc-ssh-irccon con)))))))
     (message "rcirc-ssh switching to ssh for something to watch")
     (switch-to-buffer (process-buffer ssh-session))
     ;; Wait for the rcirc connection to establish
-    (while (not real-rcirc-con)
-      (sit-for 0.1))
+    (while (not real-rcirc-con) (sit-for 0.1))
+    ;; Add the ssh session to the rcirc conenction
+    (process-put real-rcirc-con :rcirc-ssh-session ssh-session)
     ;; Return the correct irc connection
     real-rcirc-con))
 
@@ -249,7 +280,9 @@ The string is like: host:port, eg: localhost:22"
                             port nick user-name
                             full-name startup-channels
                             password encryption)
-  "Connecct to the rcirc with possible ssh proxying."
+  "Connecct to the rcirc with possible ssh proxying.
+
+The function can be used as a replacement for `rcirc-connect'."
   (let ((ssh-config (rcirc-ssh/get-key server port nick user-name)))
     (if ssh-config
         (rcirc-ssh ssh-config server
