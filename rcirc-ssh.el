@@ -5,7 +5,7 @@
 ;; Author: Nic Ferrier <nferrier@ferrier.me.uk>
 ;; Maintainer: Nic Ferrier <nferrier@ferrier.me.uk>
 ;; Keywords: processes, comm
-;; Version: 0.0.5
+;; Version: 0.0.7
 ;; Created: 14th September 2012
 ;; Package-Requires: ((kv "0.0.3"))
 
@@ -35,19 +35,19 @@
 (require 'rcirc)
 (require 'assoc) ; only for aget - should provide an aget in kv
 
-(defvar rcirc--server-ssh-connections nil
+(defvar rcirc-ssh/server-connections nil
   "List of ssh connection buffer/processes.
 
 This is state for rcirc-ssh.  It keeps the list of servers to
 which we have a connection.")
 
-(defvar rcirc--ssh-session-history nil
+(defvar rcirc-ssh/session-history nil
   "Completing read history variable.")
 
-(defvar rcirc--ssh-server-history nil
+(defvar rcirc-ssh/server-history nil
   "Completing read history variable.")
 
-(defvar rcirc--ssh-port-history nil
+(defvar rcirc-ssh/port-history nil
   "Completing read history variable.")
 
 
@@ -74,7 +74,7 @@ your main rcirc connections."
   :group 'rcirc
   :type 'boolean)
 
-(defun rcirc-ssh--find-free-service ()
+(defun rcirc-ssh/find-free-service ()
   "Return a free (unused) TCP port.
 
 The port is chosen randomly from the ephemeral ports.
@@ -102,7 +102,7 @@ This code is pinched from Elnode."
     (delete-process myserver)
     port))
 
-(defun rcirc--do-ssh (host port key &optional callback)
+(defun rcirc-ssh/do-ssh (host port key &optional callback)
   "Make an rcirc SSH session to HOST on PORT with KEY.
 
 KEY is an SSH key file name.
@@ -117,17 +117,19 @@ Callback is passed the PROC, the STATUS and the LOCAL-PORT."
               (generate-new-buffer connection-str)
             (erase-buffer)
             (current-buffer)))
-         (local-port (rcirc-ssh--find-free-service))
-         (proc
-          (start-process
-           ;; We should check for an existing process with this name before
-           ;; starting the process
-           connection-str
-           ssh-buffer
+         (local-port (rcirc-ssh/find-free-service))
+         (command
+          (list
            "ssh" "-N" "-v" ; need the -v so we can detect when the port is up
            "-L" (format "%s:localhost:%s" local-port port)
            "-i" (expand-file-name key)
-           host)))
+           host))
+         ;; We should check for an existing process with this name before
+         ;; starting the process
+         (proc (apply 'start-process
+                      connection-str ssh-buffer command)))
+    (with-current-buffer (process-buffer proc)
+      (insert (format "%s\n" command)))
     ;; Set the filter so we can find the port starting
     (set-process-filter
      proc
@@ -148,7 +150,7 @@ Callback is passed the PROC, the STATUS and the LOCAL-PORT."
            (funcall callback proc local-port)))))
     ;; Make sure the state of what proceses we have gets updated
     (let ((pair (cons url-form (list :process proc :localport local-port))))
-      (add-to-list 'rcirc--server-ssh-connections pair)
+      (add-to-list 'rcirc-ssh/server-connections pair)
       proc)))
 
 ;;;###autoload
@@ -160,19 +162,19 @@ The string is like: host:port, eg: localhost:22"
    (list
     (completing-read
      "host:port: "
-     rcirc--server-ssh-connections
+     rcirc-ssh/server-connections
      nil ; predicate
      t   ; require-match
      nil ; initial
-     'rcirc--ssh-session-history)))
-  (let ((pair (assoc host-port rcirc--server-ssh-connections)))
+     'rcirc-ssh/session-history)))
+  (let ((pair (assoc host-port rcirc-ssh/server-connections)))
     (when pair
       (delete-process
        (plist-get
-        (assoc-default host-port rcirc--server-ssh-connections)
+        (assoc-default host-port rcirc-ssh/server-connections)
         :process))
-      (setq rcirc--server-ssh-connections
-            (delq pair rcirc--server-ssh-connections)))))
+      (setq rcirc-ssh/server-connections
+            (delq pair rcirc-ssh/server-connections)))))
 
 ;;;###autoload
 (defun rcirc-ssh-list ()
@@ -183,7 +185,7 @@ The string is like: host:port, eg: localhost:22"
     (unwind-protect
          (let ((inhibit-read-only t))
            (erase-buffer)
-           (loop for session in rcirc--server-ssh-connections
+           (loop for session in rcirc-ssh/server-connections
               do
                 (destructuring-bind (host-port &key process localport) session
                   (princ
@@ -194,9 +196,52 @@ The string is like: host:port, eg: localhost:22"
                    (current-buffer))))
            (switch-to-buffer (current-buffer))))))
 
-(defun rcirc-ssh--get-key (server port nick user-name)
+(defun rcirc-ssh/get-key (server port nick user-name)
   "Lookup a key filename."
   (aget rcirc-ssh-servers server))
+
+(defun rcirc-ssh-sentinel (process sentinel)
+  (awhen (process-get process :rcirc-ssh-process)
+    (delete-process it)))
+
+;;;###autoload
+(defun rcirc-ssh (ssh-config
+                  server
+                  &optional
+                    port nick user-name
+                    full-name startup-channels
+                    password encryption)
+  "Connecct to the SERVER using SSH-CONFIG proxying."
+  (let* (real-rcirc-con
+         (ssh-session
+          (rcirc-ssh/do-ssh
+           ;; Make sure we namespace the ssh buffer
+           server ;; (concat user-name "@" server)
+           (or port 6667)
+           ;; Use the looked-up ssh key filename
+           ssh-config
+           ;; Supply the callback to start irc after the ssh
+           (lambda (proc local-port)
+             ;; Do the proxy connection over the ssh tunnel
+             (unless (process-get proc :rcirc-con)
+               (let ((con
+                      ;; Call the right connect function
+                      (funcall
+                       (if (functionp rcirc-ssh--rcirc-connect)
+                           'rcirc-ssh--rcirc-connect
+                           'rcirc-connect)
+                       "localhost" local-port
+                       nick user-name full-name
+                       startup-channels password encryption)))
+                 (setq real-rcirc-con con)
+                 (process-put proc :rcirc-con con)))))))
+    (message "rcirc-ssh switching to ssh for something to watch")
+    (switch-to-buffer (process-buffer ssh-session))
+    ;; Wait for the rcirc connection to establish
+    (while (not real-rcirc-con)
+      (sit-for 0.1))
+    ;; Return the correct irc connection
+    real-rcirc-con))
 
 ;;;###autoload
 (defun rcirc-ssh-connect (server
@@ -205,59 +250,24 @@ The string is like: host:port, eg: localhost:22"
                             full-name startup-channels
                             password encryption)
   "Connecct to the rcirc with possible ssh proxying."
-  (let ((ssh-config (rcirc-ssh--get-key server port nick user-name)))
+  (let ((ssh-config (rcirc-ssh/get-key server port nick user-name)))
     (if ssh-config
-        (let* (real-rcirc-con
-               (ssh-session
-                (rcirc--do-ssh
-                 ;; Make sure we namespace the ssh buffer
-                 (concat user-name "@" server)
-                 (or port 6667)
-                 ;; Use the looked-up ssh key filename
-                 ssh-config
-                 ;; Supply the callback to start irc after the ssh
-                 (lambda (proc local-port)
-                   ;; Do the proxy connection over the ssh tunnel
-                   (unless (process-get proc :rcirc-con)
-                     (let ((con
-                            (if (functionp rcirc-ssh--rcirc-connect)
-                                (rcirc-ssh--rcirc-connect
-                                 "localhost"
-                                 local-port
-                                 nick user-name full-name
-                                 startup-channels password
-                                 encryption)
-                                ;; Else we weren't bootstrapped, just
-                                ;; connect with rcirc
-                                (rcirc-connect
-                                 "localhost"
-                                 local-port
-                                 nick user-name full-name
-                                 startup-channels password
-                                 encryption))))
-                       (setq real-rcirc-con con)
-                       (process-put proc :rcirc-con con)))))))
-          (message "rcirc-ssh switching to ssh for something to watch")
-          (switch-to-buffer (process-buffer ssh-session))
-          ;; Wait for the rcirc connection to establish
-          (while (not real-rcirc-con)
-            (sit-for 0.1))
-          ;; Return the correct irc connection
-          real-rcirc-con)
+        (rcirc-ssh ssh-config server
+                   port nick user-name full-name
+                   startup-channels password encryption)
         ;; Else do a straight connection to the server
-        (rcirc-ssh--rcirc-connect
-         server
-         port
-         nick user-name full-name
-         startup-channels password
-         encryption))))
+        (rcirc-ssh/rcirc-connect server
+                                  port
+                                  nick user-name full-name
+                                  startup-channels password
+                                  encryption))))
 
 ;; Bootstrapping
 
-(defvar rcirc-ssh--rcirc-connect 'x)
+(defvar rcirc-ssh/rcirc-connect 'x)
 
 ;;;###autoload
-(defun rcirc-ssh--connect-proxy (&rest args)
+(defun rcirc-ssh/connect-proxy (&rest args)
   "Proxy to allow wiring things up properly"
   (apply 'rcirc-ssh-connect args))
 
@@ -283,8 +293,8 @@ in your .emacs."
   (unless (get 'rcirc-connect 'rcirc-original)
     (let ((original (symbol-function 'rcirc-connect)))
       (put 'rcirc-connect 'rcirc-original original)
-      (fset 'rcirc-ssh--rcirc-connect original)
-      (fset 'rcirc-connect (symbol-function 'rcirc-ssh--connect-proxy)))))
+      (fset 'rcirc-ssh/rcirc-connect original)
+      (fset 'rcirc-connect (symbol-function 'rcirc-ssh/connect-proxy)))))
 
 ;; Not sure how to auto bootstrap this in.
 ;; ;;;###autoload
