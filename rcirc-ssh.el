@@ -5,7 +5,7 @@
 ;; Author: Nic Ferrier <nferrier@ferrier.me.uk>
 ;; Maintainer: Nic Ferrier <nferrier@ferrier.me.uk>
 ;; Keywords: processes, comm
-;; Version: 0.0.7
+;; Version: 0.0.8
 ;; Created: 14th September 2012
 ;; Package-Requires: ((kv "0.0.3"))
 
