@@ -222,7 +222,7 @@ The string is like: host:port, eg: localhost:22"
   (let ((ssh-session (process-get irc-con-proc :rcirc-ssh-session)))
     (when (processp ssh-session)
       (let ((url (process-get ssh-session :rcirc-ssh-url)))
-        (message "disconnecting ssh session %s" ssh-session)
+        (message "rcirc-ssh/sentinel disconnecting ssh session %s" ssh-session)
         (delete-process ssh-session)
         (setq rcirc-ssh/server-connections
               (delq (assoc url rcirc-ssh/server-connections)
