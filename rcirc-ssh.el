@@ -219,13 +219,14 @@ The string is like: host:port, eg: localhost:22"
 
 (defun rcirc-ssh/sentinel (irc-con-proc sentinel)
   "If PROCESS has an `:rcirc-ssh-session' then kill it."
-  (let* ((ssh-session (process-get irc-con-proc :rcirc-ssh-session))
-         (url (process-get ssh-session :rcirc-ssh-url)))
-    (message "disconnecting ssh session %s" ssh-session)
-    (delete-process ssh-session)
-    (setq rcirc-ssh/server-connections
-          (delq (assoc url rcirc-ssh/server-connections)
-                rcirc-ssh/server-connections))))
+  (let ((ssh-session (process-get irc-con-proc :rcirc-ssh-session)))
+    (when (processp ssh-session)
+      (let ((url (process-get ssh-session :rcirc-ssh-url)))
+        (message "disconnecting ssh session %s" ssh-session)
+        (delete-process ssh-session)
+        (setq rcirc-ssh/server-connections
+              (delq (assoc url rcirc-ssh/server-connections)
+                    rcirc-ssh/server-connections))))))
 
 ;; Add the sentintel
 (add-hook 'rcirc-sentinel-hooks 'rcirc-ssh/sentinel)
@@ -326,14 +327,15 @@ in your .emacs."
   (unless (get 'rcirc-connect 'rcirc-original)
     (let ((original (symbol-function 'rcirc-connect)))
       (put 'rcirc-connect 'rcirc-original original)
-      (fset 'rcirc-ssh/rcirc-connect original)
+      (fset 'rcirc-ssh/rcirc-connect
+            (get 'rcirc-connect 'rcirc-original))
       (fset 'rcirc-connect (symbol-function 'rcirc-ssh/connect-proxy)))))
 
 ;; Not sure how to auto bootstrap this in.
-;; ;;;###autoload
-;; (eval-after-load "rcirc"
-;;   '(when rcirc-ssh-do-bootstrap
-;;     (rcirc-ssh-bootstrap)))
+;;;###autoload
+(eval-after-load "rcirc"
+  '(when rcirc-ssh-do-bootstrap
+    (rcirc-ssh-bootstrap)))
 
 (provide 'rcirc-ssh)
 
