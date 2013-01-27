@@ -329,13 +329,8 @@ in your .emacs."
       (put 'rcirc-connect 'rcirc-original original)
       (fset 'rcirc-ssh/rcirc-connect
             (get 'rcirc-connect 'rcirc-original))
-      (fset 'rcirc-connect (symbol-function 'rcirc-ssh/connect-proxy)))))
-
-;; Not sure how to auto bootstrap this in.
-;;;###autoload
-(eval-after-load "rcirc"
-  '(when rcirc-ssh-do-bootstrap
-    (rcirc-ssh-bootstrap)))
+      (fset 'rcirc-connect
+            (symbol-function 'rcirc-ssh/connect-proxy)))))
 
 (provide 'rcirc-ssh)
 
